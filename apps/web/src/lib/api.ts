@@ -22,7 +22,13 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     window.location.href = `/login?next=${encodeURIComponent(window.location.pathname + window.location.search)}`;
   }
   const text = await res.text();
-  const data = text ? JSON.parse(text) : undefined;
+  let data;
+  try {
+    data = text ? JSON.parse(text) : undefined;
+  } catch {
+    // Not from our API at all, e.g. the host's own 404/502 page because API_URL is wrong or the API is down.
+    throw new ApiError(res.status, `Can't reach the booking server (HTTP ${res.status}). Please try again or contact the administrator.`);
+  }
   if (!res.ok) {
     const msg = Array.isArray(data?.message) ? data.message.join(". ") : data?.message;
     throw new ApiError(res.status, msg || `Request failed (${res.status})`, data ?? {});

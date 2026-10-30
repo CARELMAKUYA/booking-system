@@ -20,6 +20,7 @@ import { Transform, Type } from 'class-transformer';
 import { IsBoolean, IsEnum, IsInt, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
 import type { Response } from 'express';
 import { createReadStream, existsSync, mkdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { extname, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { diskStorage } from 'multer';
@@ -30,7 +31,8 @@ import { IsDateOnly } from '../common/validation';
 import { PrismaService } from '../prisma/prisma.service';
 import { paymentInclude, toPaymentDto } from '../bookings/booking.mapper';
 
-const UPLOAD_DIR = resolve(process.env.UPLOAD_DIR ?? './uploads');
+// Serverless hosts like Vercel only allow writes to the temp folder, and files there don't persist.
+const UPLOAD_DIR = resolve(process.env.UPLOAD_DIR ?? (process.env.VERCEL ? join(tmpdir(), 'uploads') : './uploads'));
 const ALLOWED_PROOF_TYPES: Record<string, string> = {
   'application/pdf': '.pdf',
   'image/jpeg': '.jpg',
