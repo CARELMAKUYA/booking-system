@@ -1,0 +1,227 @@
+// BnB booking system data model.
+// All money values are stored as integer cents (ZAR) to avoid rounding errors.
+// Booking dates are calendar dates (no time) interpreted in SAST (Africa/Johannesburg).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  OWNER
+  RECEPTIONIST
+}
+
+enum RoomStatus {
+  AVAILABLE
+  BOOKED
+  OCCUPIED
+  CLEANING
+  MAINTENANCE
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  CHECKED_IN
+  CHECKED_OUT
+  CANCELLED
+}
+
+enum BookingSource {
+  PHONE
+  WHATSAPP
+  EMAIL
+  WALK_IN
+}
+
+enum PaymentMethod {
+  CASH
+  EFT
+}
+
+enum PaymentType {
+  DEPOSIT
+  PAYMENT
+  REFUND
+}
+
+model User {
+  id           String    @id @default(cuid())
+  name         String
+  email        String    @unique
+  passwordHash String
+  role         Role      @default(RECEPTIONIST)
+  active       Boolean   @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  sessions         Session[]
+  bookingsCreated  Booking[]  @relation("BookingCreatedBy")
+  bookingsUpdated  Booking[]  @relation("BookingUpdatedBy")
+  paymentsRecorded Payment[]  @relation("PaymentRecordedBy")
+  paymentsVerified Payment[]  @relation("PaymentVerifiedBy")
+  auditLogs        AuditLog[]
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  // SHA-256 of the cookie token; the raw token is never stored.
+  tokenHash String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model Room {
+  id                 String     @id @default(cuid())
+  name               String     @unique
+  description        String?
+  pricePerNightCents Int
+  maxGuests          Int        @default(2)
+  // Housekeeping status. OCCUPIED is set at check-in, CLEANING at check-out.
+  // BOOKED is derived at read time from confirmed arrivals for today.
+  status             RoomStatus @default(AVAILABLE)
+  active             Boolean    @default(true)
+  sortOrder          Int        @default(0)
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+
+  bookings Booking[]
+}
+
+model Guest {
+  id              String    @id @default(cuid())
+  firstName       String
+  lastName        String
+  // Stored in E.164 format, e.g. +27821234567
+  phone           String
+  email           String?
+  vehicleReg      String?
+  notes           String?
+  // POPIA: record that the guest consented to their information being processed.
+  consentGiven    Boolean   @default(false)
+  consentAt       DateTime?
+  // POPIA: set when personal information has been erased on request.
+  anonymisedAt    DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  bookings Booking[]
+
+  @@index([phone])
+  @@index([lastName, firstName])
+}
+
+model Booking {
+  id                 String        @id @default(cuid())
+  reference          String        @unique
+  guestId            String
+  guest              Guest         @relation(fields: [guestId], references: [id])
+  roomId             String
+  room               Room          @relation(fields: [roomId], references: [id])
+  checkIn            DateTime      @db.Date
+  checkOut           DateTime      @db.Date
+  adults             Int           @default(1)
+  children           Int           @default(0)
+  status             BookingStatus @default(PENDING)
+  source             BookingSource @default(PHONE)
+  nightlyRateCents   Int
+  nights             Int
+  // Accommodation total (VAT inclusive when the BnB is VAT registered).
+  totalCents         Int
+  vatCents           Int           @default(0)
+  depositRequiredCents Int         @default(0)
+  // When a booking is cancelled, the amount the guest still owes (cancellation fee).
+  cancellationFeeCents Int?
+  specialRequests    String?
+  internalNotes      String?
+  actualCheckInAt    DateTime?
+  actualCheckOutAt   DateTime?
+  cancelledAt        DateTime?
+  cancelReason       String?
+  createdById        String
+  createdBy          User          @relation("BookingCreatedBy", fields: [createdById], references: [id])
+  updatedById        String?
+  updatedBy          User?         @relation("BookingUpdatedBy", fields: [updatedById], references: [id])
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  payments Payment[]
+
+  @@index([roomId, checkIn, checkOut])
+  @@index([checkIn])
+  @@index([checkOut])
+  @@index([status])
+}
+
+model Payment {
+  id            String        @id @default(cuid())
+  bookingId     String
+  booking       Booking       @relation(fields: [bookingId], references: [id])
+  type          PaymentType
+  method        PaymentMethod
+  // Always positive; REFUND payments are subtracted from the total received.
+  amountCents   Int
+  paymentDate   DateTime      @db.Date
+  reference     String?
+  notes         String?
+  proofFileName String?
+  proofFilePath String?
+  proofMimeType String?
+  // Cash is verified on receipt. EFT is verified only once funds have cleared.
+  verified      Boolean       @default(false)
+  verifiedAt    DateTime?
+  verifiedById  String?
+  verifiedBy    User?         @relation("PaymentVerifiedBy", fields: [verifiedById], references: [id])
+  recordedById  String
+  recordedBy    User          @relation("PaymentRecordedBy", fields: [recordedById], references: [id])
+  voidedAt      DateTime?
+  voidReason    String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@index([bookingId])
+  @@index([paymentDate])
+}
+
+model Settings {
+  id                    Int      @id @default(1)
+  businessName          String   @default("My BnB")
+  address               String?
+  phone                 String?
+  email                 String?
+  vatRegistered         Boolean  @default(false)
+  vatNumber             String?
+  // Basis points, 1500 = 15%
+  vatRateBps            Int      @default(1500)
+  defaultDepositPercent Int      @default(50)
+  checkInTime           String   @default("14:00")
+  checkOutTime          String   @default("10:00")
+  bankDetails           String?
+  updatedAt             DateTime @updatedAt
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  action    String
+  entity    String
+  entityId  String?
+  details   Json?
+  createdAt DateTime @default(now())
+
+  @@index([entity, entityId])
+  @@index([createdAt])
+}
